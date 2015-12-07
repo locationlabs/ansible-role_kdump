@@ -1,0 +1,69 @@
+---
+
+- name: clean slate
+  hosts: it-ansible
+  tasks:
+    - include: tasks/check_crash_kernel.yml
+
+    - fail: msg="crash kernel already loaded, which makes tests rather less useful"
+      when: crash_kernel_loaded
+
+  # These next two plays just try to execute everything in the role without bombing out (FIXME: an
+  # ansible test coverage tool would be nice).
+- name: apply kdump role without reboot
+  hosts: it-ansible
+  roles:
+    - { role: kdump, allow_reboot: false }
+
+- name: apply kdump role with optional reboot
+  hosts: it-ansible
+  roles:
+    - { role: kdump, allow_reboot: true }
+
+- name: trigger a crash and check for crash dumps
+  hosts: it-ansible
+  tasks:
+    - include: tasks/check_crash_kernel.yml
+
+    - fail: msg="crash kernel was not loaded"
+      when: not crash_kernel_loaded
+
+      # This could use a lot of improvement
+    - name: check for recent dump files
+      shell: find /var/crash -mindepth 2 -maxdepth 2 -name 'dump.*' | wc -l
+      register: recent_crash_files
+      always_run: yes
+
+    - set_fact: pre_crash_file_count={{recent_crash_files.stdout|int}}
+
+      # hackish sleep/nohup bits to let the async module get out before the building collapses
+    - name: trigger a crash
+      command: nohup bash -c '(sleep 3; echo c > /proc/sysrq-trigger) & disown -ah'
+      async: 0
+      poll: 0
+      ignore_errors: true
+
+    - name: wait for server to reboot
+      include: tasks/wait_for_reboot.yml
+
+      # /var/crash/ looks like this after a couple of (artificially triggered) crashes:
+
+      # root@it-ansible:~# ll /var/crash/
+      # total 28
+      # drwxrwxrwt  4 root root 4096 Jun 30 01:50 ./
+      # drwxr-xr-x 13 root root 4096 Jun 29 22:41 ../
+      # drwxr-xr-x  2 root root 4096 Jun 30 01:06 201506300106/
+      # drwxr-xr-x  2 root root 4096 Jun 30 01:50 201506300150/
+      # -rw-r--r--  1 root root  252 Jun 30 01:51 kexec_cmd
+      # -rw-r--r--  1 root root  249 Jun 30 01:06 linux-image-3.13.0-27-generic 3.13.0-27.50-201506300106.crash
+      # -rw-r--r--  1 root root  249 Jun 30 01:50 linux-image-3.13.0-27-generic 3.13.0-27.50-201506300150.crash
+
+    - name: check for recent dump files
+      shell: find /var/crash -mindepth 2 -maxdepth 2 -name 'dump.*' | wc -l
+      register: recent_crash_files
+      always_run: yes
+
+    - set_fact: post_crash_file_count={{recent_crash_files.stdout|int}}
+
+    - fail: msg="did not get a new crash dump"
+      when: post_crash_file_count <= pre_crash_file_count

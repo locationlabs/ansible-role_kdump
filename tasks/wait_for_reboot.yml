@@ -1,0 +1,16 @@
+---
+
+  # FIXME: This current scheme doesn't work so well with vagrants which reboot themselves (as
+  # opposed to killing them via vboxmanage et al), since the port forward(s) seem to stay up the
+  # entire time.  Maybe use a polling loop which waits for remote time of boot (computed as local
+  # now - remote /proc/uptime) to increase, in order to detect edge cases like very quick (virt) or
+  # very slow (eg physical box w/high io load, long post, etc) reboots.  Use remote /proc/uptime
+  # but local now to avoid any weird issues with the remote's wall clock during boot cycle.
+
+- name: waiting for server to shut down
+  local_action: wait_for host={{ ansible_ssh_host | default(inventory_hostname) }} port={{ansible_ssh_port}} state=stopped connect_timeout=1
+  sudo: false
+
+- name: waiting for server to start up
+  local_action: wait_for host={{ ansible_ssh_host | default(inventory_hostname) }} port={{ansible_ssh_port}} state=started connect_timeout=1 search_regex=SSH
+  sudo: false

@@ -1,0 +1,61 @@
+---
+
+- apt: name=linux-crashdump state=present update_cache=yes cache_valid_time=86400
+
+  # This is a dependency of linux-crashdump (as of at least 14.04, not sure about intermediate
+  # versions).  The 12.04 package doesn't have the dependency so install manually.
+- apt: name=kdump-tools state=present
+  when: ansible_distribution_version|version_compare('14.04', '<')
+
+  # get a backup before any of our mods
+- lineinfile: dest=/etc/default/kdump-tools line="USE_KDUMP=1" insertafter="USE_KDUMP=0" backup=yes
+
+  # don't backup after the first of our mods
+- lineinfile: dest=/etc/default/kdump-tools line="USE_KDUMP=0" state=absent backup=no
+- lineinfile: dest=/etc/default/kdump-tools line='KDUMP_SYSCTL="kernel.panic_on_oops=1 vm.panic_on_oom=1"' insertafter="KDUMP_SYSCTL" backup=no
+
+- name: make sure crash kernel is loaded at boot
+  service: name=kdump-tools enabled=yes
+
+- include: check_crash_kernel.yml
+
+- name: try to load crash kernel
+  command: kdump-config load
+  register: kdump_config_load
+  ignore_errors: yes
+  when: not crash_kernel_loaded
+
+- debug: var=kdump_config_load
+
+  # We need a reboot if kdump-config load failed.  Example error:
+  # root@it-ansible:~# kdump-config load
+  #  * no crashkernel= parameter in the kernel cmdline
+  # root@it-ansible:~# echo $?
+  # 1
+- set_fact: reboot_needed=true
+  when: "not crash_kernel_loaded and ('no crashkernel= parameter in the kernel cmdline' in kdump_config_load.stdout)"
+
+- include: check_crash_kernel.yml
+
+  # reboot definitely not needed if crash kernel is already loaded
+- set_fact: reboot_needed=false
+  when: crash_kernel_loaded
+
+  # reboot is needed before we can kdump-config load since the currently booted kernel has to have
+  # a crashkernel memory reservation parameter.
+
+- name: restart to enable crashdump
+  command: shutdown -r now "shutting down to enable kdump"
+  async: 0
+  poll: 0
+  ignore_errors: true
+  when: reboot_needed|default(false) and allow_reboot
+
+- name: wait for reboot
+  include: wait_for_reboot.yml
+  when: reboot_needed|default(false) and allow_reboot
+
+- include: check_crash_kernel.yml
+
+- fail: msg="crash kernel did not load"
+  when: not crash_kernel_loaded

@@ -1,0 +1,29 @@
+---
+
+  # This include just sets the crash_kernel_loaded variable.
+
+- name: check kdump status
+  command: kdump-config status
+  register: kdump_config_status
+  always_run: yes
+  changed_when: false
+  ignore_errors: yes
+
+  # This awfulness is to get around the amazing fact that ansible (1.7.2, 1.9.x) sometimes thinks
+  # that both x and not x are false.  For example if we directly set_fact
+  # crash_kernel_loaded="{{'current state : ready to kdump' in kdump_config_status.stdout}}", the following debugs show false false true
+
+  # - debug: msg="ckl={{crash_kernel_loaded}}"
+  # - debug: msg="not ckl={{not crash_kernel_loaded}}"
+  # - debug: msg="not not ckl={{not not crash_kernel_loaded}}"
+
+- set_fact: crash_kernel_loaded=true
+  when: "'current state   : ready to kdump' in kdump_config_status.stdout"
+
+- set_fact: crash_kernel_loaded=false
+  when: "'current state   : ready to kdump' not in kdump_config_status.stdout"
+
+- debug: var=crash_kernel_loaded
+
+# - set_fact:
+#     crash_kernel_loaded: not(not(crash_kernel_loaded))
