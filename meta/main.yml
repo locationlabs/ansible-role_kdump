@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  author: Location Labs
+  description: Enable the capture of kernel crash dumps
+  licence: Apache v2.0
+  min_ansible_version: 1.9.2
+dependencies: []
